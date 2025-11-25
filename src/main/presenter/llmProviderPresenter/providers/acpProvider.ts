@@ -20,7 +20,11 @@ import {
 import { ModelType } from '@shared/model'
 import { eventBus, SendTarget } from '@/eventbus'
 import { CONFIG_EVENTS } from '@/events'
-import { AcpProcessManager } from '../agent/acpProcessManager'
+import {
+  AcpProcessManager,
+  type PermissionResolver,
+  type SessionNotificationHandler
+} from '../agent/acpProcessManager'
 import { AcpSessionManager } from '../agent/acpSessionManager'
 import type { AcpSessionRecord } from '../agent/acpSessionManager'
 import { AcpContentMapper } from '../agent/acpContentMapper'
@@ -296,6 +300,75 @@ export class AcpProvider extends BaseAgentProvider<
     maxTokens: number = 4096
   ): Promise<LLMResponse> {
     return this.completions([{ role: 'user', content: prompt }], modelId, temperature, maxTokens)
+  }
+
+  public async *runSlashCommand(
+    sessionId: string,
+    commandName: string,
+    userInput?: string,
+    conversationId?: string
+  ): AsyncGenerator<LLMCoreStreamEvent> {
+    const queue = this.createEventQueue()
+    const detachHandlers: Array<() => void> = []
+
+    const session = this.sessionManager.getSessionById(sessionId)
+    if (!session) {
+      queue.push(createStreamEvent.error(`ACP session not found: ${sessionId}`))
+      queue.done()
+    } else {
+      const agent = await this.getAgentById(session.agentId)
+      const normalizedName = commandName.startsWith('/') ? commandName.slice(1) : commandName
+      const input = userInput?.trim()
+      const promptText = input ? `/${normalizedName} ${input}` : `/${normalizedName}`
+      const promptBlocks: schema.ContentBlock[] = [{ type: 'text', text: promptText }]
+
+      const onSessionUpdate: SessionNotificationHandler = (notification) => {
+        const mapped = this.contentMapper.map(notification)
+        mapped.events.forEach((event) => queue.push(event))
+      }
+
+      const onPermission: PermissionResolver = (request) =>
+        this.handlePermissionRequest(queue, request, {
+          agent: agent ?? { id: session.agentId, name: session.agentId, command: '' },
+          conversationId: conversationId ?? session.conversationId
+        })
+
+      detachHandlers.push(
+        this.processManager.registerSessionListener(
+          session.agentId,
+          session.sessionId,
+          onSessionUpdate
+        )
+      )
+      detachHandlers.push(
+        this.processManager.registerPermissionResolver(
+          session.agentId,
+          session.sessionId,
+          onPermission
+        )
+      )
+
+      void this.runPrompt(session, promptBlocks, queue)
+    }
+
+    try {
+      while (true) {
+        const event = await queue.next()
+        if (event === null) break
+        yield event
+      }
+    } finally {
+      detachHandlers.forEach((dispose) => {
+        try {
+          dispose()
+        } catch (error) {
+          console.warn('[ACP] Failed to dispose slash command handler:', error)
+        }
+      })
+      if (sessionId) {
+        this.clearPendingPermissionsForSession(sessionId)
+      }
+    }
   }
 
   async *coreStream(

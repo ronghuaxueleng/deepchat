@@ -9,6 +9,12 @@ import type {
 } from './acpProcessManager'
 import type { ClientSideConnection as ClientSideConnectionType } from '@agentclientprotocol/sdk'
 import { AcpSessionPersistence } from './acpSessionPersistence'
+import type {
+  AgentSlashCommand,
+  AgentSessionCommandsPayload
+} from '@shared/types/core/agent-events'
+import { eventBus, SendTarget } from '@/eventbus'
+import { ACP_EVENTS } from '@/events'
 
 interface AcpSessionManagerOptions {
   providerId: string
@@ -34,6 +40,7 @@ export class AcpSessionManager {
   private readonly sessionsByConversation = new Map<string, AcpSessionRecord>()
   private readonly sessionsById = new Map<string, AcpSessionRecord>()
   private readonly pendingSessions = new Map<string, Promise<AcpSessionRecord>>()
+  private readonly sessionCommands = new Map<string, AgentSlashCommand[]>()
 
   constructor(options: AcpSessionManagerOptions) {
     this.providerId = options.providerId
@@ -64,7 +71,12 @@ export class AcpSessionManager {
         }
       })
       // Register new handlers
-      existing.detachHandlers = this.attachSessionHooks(agent.id, existing.sessionId, hooks)
+      existing.detachHandlers = this.attachSessionHooks(
+        agent.id,
+        existing.sessionId,
+        existing.conversationId,
+        hooks
+      )
       existing.workdir = resolvedWorkdir
       return existing
     }
@@ -131,6 +143,14 @@ export class AcpSessionManager {
     }
 
     await this.sessionPersistence.clearSession(conversationId, session.agentId)
+    this.sessionCommands.delete(session.sessionId)
+    this.broadcastSessionCommands({
+      providerId: this.providerId,
+      agentId: session.agentId,
+      sessionId: session.sessionId,
+      conversationId,
+      commands: []
+    })
   }
 
   async clearAllSessions(): Promise<void> {
@@ -141,6 +161,27 @@ export class AcpSessionManager {
     this.sessionsByConversation.clear()
     this.sessionsById.clear()
     this.pendingSessions.clear()
+    this.sessionCommands.clear()
+  }
+
+  private handleSessionCommands(
+    sessionId: string,
+    conversationId: string,
+    agentId: string,
+    commands: AgentSlashCommand[]
+  ): void {
+    this.sessionCommands.set(sessionId, commands)
+    this.broadcastSessionCommands({
+      providerId: this.providerId,
+      agentId,
+      sessionId,
+      conversationId,
+      commands
+    })
+  }
+
+  private broadcastSessionCommands(payload: AgentSessionCommandsPayload): void {
+    eventBus.sendToRenderer(ACP_EVENTS.SESSION_COMMANDS, SendTarget.ALL_WINDOWS, payload)
   }
 
   private async createSession(
@@ -151,7 +192,12 @@ export class AcpSessionManager {
   ): Promise<AcpSessionRecord> {
     const handle = await this.processManager.getConnection(agent)
     const session = await this.initializeSession(handle, agent, workdir)
-    const detachListeners = this.attachSessionHooks(agent.id, session.sessionId, hooks)
+    const detachListeners = this.attachSessionHooks(
+      agent.id,
+      session.sessionId,
+      conversationId,
+      hooks
+    )
 
     void this.sessionPersistence
       .saveSessionData(conversationId, agent.id, session.sessionId, workdir, 'active', {
@@ -179,12 +225,18 @@ export class AcpSessionManager {
   private attachSessionHooks(
     agentId: string,
     sessionId: string,
+    conversationId: string,
     hooks: SessionHooks
   ): Array<() => void> {
     const detachUpdate = this.processManager.registerSessionListener(
       agentId,
       sessionId,
-      hooks.onSessionUpdate
+      hooks.onSessionUpdate,
+      {
+        conversationId,
+        onCommands: (commands) =>
+          this.handleSessionCommands(sessionId, conversationId, agentId, commands)
+      }
     )
     const detachPermission = this.processManager.registerPermissionResolver(
       agentId,

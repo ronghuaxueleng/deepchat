@@ -45,11 +45,30 @@
         </div>
 
         <!-- Editor -->
-        <editor-content
-          :editor="editor"
-          :class="['text-sm', variant === 'chat' ? 'dark:text-white/80' : 'p-2']"
-          @keydown="onKeydown"
-        />
+        <div class="relative">
+          <editor-content
+            :editor="editor"
+            :class="['text-sm', variant === 'chat' ? 'dark:text-white/80' : 'p-2']"
+            @keydown="onKeydown"
+          />
+
+          <div
+            v-if="showSlashSuggestions"
+            class="absolute left-0 right-0 bottom-full z-20 mb-2 max-h-60 overflow-y-auto rounded-lg border bg-popover shadow-lg"
+          >
+            <button
+              v-for="command in filteredSlashCommands"
+              :key="command.name"
+              type="button"
+              class="flex w-full flex-col items-start gap-1 px-3 py-2 text-left hover:bg-accent"
+              @mousedown.prevent
+              @click="handleSlashCommandSelection(command)"
+            >
+              <span class="text-sm font-medium text-foreground">/{{ command.name }}</span>
+              <span class="text-xs text-muted-foreground">{{ command.description }}</span>
+            </button>
+          </div>
+        </div>
 
         <!-- Footer -->
         <div class="flex items-center justify-between">
@@ -315,6 +334,35 @@
             </div>
           </div>
         </div>
+
+        <Dialog v-model:open="slashDialogOpen">
+          <DialogContent class="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>
+                <span class="text-sm font-semibold"> /{{ selectedSlashCommand?.name }} </span>
+              </DialogTitle>
+            </DialogHeader>
+            <div class="space-y-3">
+              <p class="text-sm text-muted-foreground">
+                {{ selectedSlashCommand?.description }}
+              </p>
+              <p v-if="selectedSlashCommand?.hint" class="text-xs text-muted-foreground">
+                {{ selectedSlashCommand?.hint }}
+              </p>
+              <Textarea
+                v-model="slashInput"
+                :placeholder="selectedSlashCommand?.hint || ''"
+                class="min-h-24"
+              />
+            </div>
+            <DialogFooter class="mt-4 flex gap-2">
+              <Button variant="outline" @click="closeSlashDialog">{{ t('common.cancel') }}</Button>
+              <Button :disabled="!canRunSlash" @click="submitSlashCommand">
+                {{ t('common.confirm') }}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </TooltipProvider>
   </div>
@@ -339,6 +387,14 @@ import {
   TooltipTrigger
 } from '@shadcn/components/ui/tooltip'
 import { Popover, PopoverContent, PopoverTrigger } from '@shadcn/components/ui/popover'
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from '@shadcn/components/ui/dialog'
+import { Textarea } from '@shadcn/components/ui/textarea'
 import { Icon } from '@iconify/vue'
 import { Editor, EditorContent } from '@tiptap/vue-3'
 import Document from '@tiptap/extension-document'
@@ -372,6 +428,8 @@ import { useAcpWorkdir } from './composables/useAcpWorkdir'
 import { useChatStore } from '@/stores/chat'
 import { useLanguageStore } from '@/stores/language'
 import { useThemeStore } from '@/stores/theme'
+import { useSlashCommandsStore } from '@/stores/slashCommands'
+import type { AgentSlashCommand } from '@shared/types/core/agent-events'
 
 // === Mention System ===
 import { Mention } from '../editor/mention/mention'
@@ -403,6 +461,7 @@ const emit = defineEmits(['send', 'file-upload'])
 const chatStore = useChatStore()
 const langStore = useLanguageStore()
 const themeStore = useThemeStore()
+const slashCommandsStore = useSlashCommandsStore()
 
 // === Presenters ===
 const windowPresenter = usePresenter('windowPresenter')
@@ -413,6 +472,15 @@ const { t } = useI18n()
 // === Local State ===
 const fileInput = ref<HTMLInputElement>()
 const modelSelectOpen = ref(false)
+const slashDialogOpen = ref(false)
+const selectedSlashCommand = ref<AgentSlashCommand | null>(null)
+const slashInput = ref('')
+
+type SlashTriggerContext = {
+  keyword: string
+  from: number
+  to: number
+}
 
 // === Composable Integrations ===
 
@@ -543,12 +611,67 @@ const acpWorkdir = useAcpWorkdir({
   conversationId
 })
 
+const slashSession = computed(() => {
+  const threadId = conversationId.value
+  if (!threadId) return null
+  return slashCommandsStore.getCommands(threadId)
+})
+
+const slashTriggerContext = computed<SlashTriggerContext | null>(() => {
+  if (
+    props.variant !== 'chat' ||
+    slashDialogOpen.value ||
+    isStreaming.value ||
+    !slashSession.value?.commands.length
+  ) {
+    return null
+  }
+
+  const selection = editor.state?.selection
+  if (!selection || !selection.empty) {
+    return null
+  }
+
+  const from = selection.from
+  const textBefore = editor.state.doc.textBetween(0, from, '\n', '\n')
+  const match = textBefore.match(/(^|\s)(\/[^\s]*)$/)
+  if (!match) return null
+
+  const slashText = match[2]
+  if (!slashText) return null
+
+  const triggerFrom = from - slashText.length
+  return {
+    keyword: slashText.slice(1),
+    from: triggerFrom,
+    to: from
+  }
+})
+
+const filteredSlashCommands = computed(() => {
+  const context = slashTriggerContext.value
+  if (!slashSession.value?.commands.length || !context) return []
+  const keyword = context.keyword.trim().toLowerCase()
+  if (!keyword) return slashSession.value.commands
+  return slashSession.value.commands.filter((command) =>
+    `${command.name} ${command.description}`.toLowerCase().includes(keyword)
+  )
+})
+
 // === Computed ===
 // Use composable values
 const { currentContextLengthText, shouldShowContextLength, contextLengthStatusClass } =
   contextLengthTracker
 
 const { disabledSend, isStreaming } = sendButtonState
+
+const showSlashSuggestions = computed(() => {
+  return Boolean(slashTriggerContext.value && filteredSlashCommands.value.length > 0)
+})
+
+const canRunSlash = computed(
+  () => !!(selectedSlashCommand.value && slashSession.value?.sessionId && !isStreaming.value)
+)
 
 // === Event Handlers ===
 const handleDrop = async (e: DragEvent) => {
@@ -629,6 +752,42 @@ const onKeydown = (e: KeyboardEvent) => {
 
 const restoreFocus = () => {
   editorComposable.restoreFocus()
+}
+
+const openSlashCommandDialog = (command: AgentSlashCommand) => {
+  selectedSlashCommand.value = command
+  slashDialogOpen.value = true
+  slashInput.value = ''
+}
+
+const handleSlashCommandSelection = (command: AgentSlashCommand) => {
+  const context = slashTriggerContext.value
+  if (context) {
+    editor.chain().focus().insertContentAt({ from: context.from, to: context.to }, '').run()
+  }
+  openSlashCommandDialog(command)
+}
+
+const closeSlashDialog = () => {
+  slashDialogOpen.value = false
+  selectedSlashCommand.value = null
+  slashInput.value = ''
+}
+
+const submitSlashCommand = () => {
+  if (!selectedSlashCommand.value || !slashSession.value?.sessionId) return
+  const targetSession = slashSession.value.sessionId
+  const targetCommand = selectedSlashCommand.value.name
+  const userInput = slashInput.value
+
+  closeSlashDialog()
+  nextTick(() => {
+    editor.commands.focus()
+  })
+
+  void chatStore
+    .runSlashCommand(targetCommand, targetSession, userInput)
+    .catch((error) => console.error('Failed to submit slash command', error))
 }
 
 // === Event Handler Functions ===

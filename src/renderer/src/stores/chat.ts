@@ -343,6 +343,50 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  const runSlashCommand = async (
+    commandName: string,
+    sessionId: string,
+    userInput?: string
+  ): Promise<void> => {
+    const threadId = getActiveThreadId()
+    if (!threadId) return
+
+    const trimmedInput = userInput?.trim()
+    const commandText = trimmedInput ? `/${commandName} ${trimmedInput}` : `/${commandName}`
+    const userContent: UserMessageContent = {
+      text: commandText,
+      files: [],
+      links: [],
+      search: false,
+      think: false,
+      content: [{ type: 'text', content: commandText }]
+    }
+
+    try {
+      generatingThreadIds.value.add(threadId)
+      updateThreadWorkingStatus(threadId, 'working')
+
+      const aiResponseMessage = await threadP.sendMessage(
+        threadId,
+        JSON.stringify(userContent),
+        'user'
+      )
+
+      if (aiResponseMessage) {
+        getGeneratingMessagesCache().set(aiResponseMessage.id, {
+          message: aiResponseMessage,
+          threadId
+        })
+      }
+
+      await loadMessages()
+      await threadP.startSlashCommand(threadId, sessionId, commandName, trimmedInput)
+    } catch (error) {
+      console.error('Failed to run slash command:', error)
+      throw error
+    }
+  }
+
   const retryMessage = async (messageId: string) => {
     if (!getActiveThreadId()) return
     try {
@@ -1380,6 +1424,7 @@ export const useChatStore = defineStore('chat', () => {
     setActiveThread,
     loadMessages,
     sendMessage,
+    runSlashCommand,
     handleStreamResponse,
     handleStreamEnd,
     handleStreamError,

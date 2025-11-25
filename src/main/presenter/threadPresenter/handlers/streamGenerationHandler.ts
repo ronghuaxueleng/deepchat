@@ -352,6 +352,56 @@ export class StreamGenerationHandler extends BaseHandler {
     }
   }
 
+  async startSlashCommand(
+    conversationId: string,
+    sessionId: string,
+    commandName: string,
+    userInput?: string
+  ): Promise<void> {
+    const state = this.findGeneratingState(conversationId)
+    if (!state) {
+      console.warn('[StreamGenerationHandler] Slash command state not found', conversationId)
+      return
+    }
+
+    try {
+      const conversation = await this.getConversation(conversationId)
+      const { providerId, modelId } = conversation.settings
+      if (providerId !== 'acp') {
+        throw new Error('Slash commands are only supported for ACP agents')
+      }
+
+      const stream = this.ctx.llmProviderPresenter.runSlashCommand(
+        providerId,
+        modelId,
+        state.message.id,
+        sessionId,
+        commandName,
+        userInput,
+        conversationId
+      )
+
+      for await (const event of stream) {
+        const msg = event.data
+        if (event.type === 'response') {
+          await this.llmEventHandler.handleLLMAgentResponse(msg)
+        } else if (event.type === 'error') {
+          await this.llmEventHandler.handleLLMAgentError(msg)
+        } else if (event.type === 'end') {
+          await this.llmEventHandler.handleLLMAgentEnd(msg)
+        }
+      }
+    } catch (error) {
+      if (String(error).includes('userCanceledGeneration')) {
+        console.log('[StreamGenerationHandler] Slash command cancelled by user')
+        return
+      }
+      console.error('[StreamGenerationHandler] Error during slash command:', error)
+      await this.ctx.messageManager.handleMessageError(state.message.id, String(error))
+      throw error
+    }
+  }
+
   async prepareConversationContext(
     conversationId: string,
     queryMsgId?: string,

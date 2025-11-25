@@ -121,6 +121,11 @@ export const MCP_EVENTS = {
   SAMPLING_CANCELLED: 'mcp:sampling-cancelled'
 }
 
+// ACP 相关事件
+export const ACP_EVENTS = {
+  SESSION_COMMANDS: 'acp:session-commands' // 会话可用命令更新
+}
+
 // 同步相关事件
 export const SYNC_EVENTS = {
   BACKUP_STARTED: 'sync:backup-started',

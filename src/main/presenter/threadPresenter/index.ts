@@ -461,6 +461,20 @@ export class ThreadPresenter implements IThreadPresenter {
       selectedVariantsMap
     )
   }
+
+  async startSlashCommand(
+    conversationId: string,
+    sessionId: string,
+    commandName: string,
+    userInput?: string
+  ): Promise<void> {
+    await this.streamGenerationHandler.startSlashCommand(
+      conversationId,
+      sessionId,
+      commandName,
+      userInput
+    )
+  }
   async continueStreamCompletion(
     conversationId: string,
     queryMsgId: string,

@@ -40,3 +40,17 @@ export type LLMAgentEvent =
   | { type: 'response'; data: LLMAgentEventData }
   | { type: 'error'; data: { eventId: string; error: string } }
   | { type: 'end'; data: { eventId: string; userStop: boolean } }
+
+export interface AgentSlashCommand {
+  name: string
+  description: string
+  hint?: string | null
+}
+
+export interface AgentSessionCommandsPayload {
+  providerId: string
+  agentId: string
+  sessionId: string
+  conversationId?: string
+  commands: AgentSlashCommand[]
+}

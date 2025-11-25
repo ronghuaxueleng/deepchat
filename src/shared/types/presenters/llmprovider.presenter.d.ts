@@ -162,6 +162,15 @@ export interface ILlmProviderPresenter {
     searchStrategy?: 'turbo' | 'max',
     conversationId?: string
   ): AsyncGenerator<LLMAgentEvent, void, unknown>
+  runSlashCommand(
+    providerId: string,
+    modelId: string,
+    eventId: string,
+    sessionId: string,
+    commandName: string,
+    userInput?: string,
+    conversationId?: string
+  ): AsyncGenerator<LLMAgentEvent, void, unknown>
   generateCompletion(
     providerId: string,
     messages: { role: 'system' | 'user' | 'assistant'; content: string }[],

@@ -12,6 +12,7 @@ import type {
 import type * as schema from '@agentclientprotocol/sdk/dist/schema.js'
 import type { Stream } from '@agentclientprotocol/sdk/dist/stream.js'
 import type { AcpAgentConfig } from '@shared/presenter'
+import type { AgentSlashCommand } from '@shared/types/core/agent-events'
 import type { AgentProcessHandle, AgentProcessManager } from './types'
 import { getShellEnvironment } from './shellEnvHelper'
 import { RuntimeHelper } from '@/lib/runtimeHelper'
@@ -38,7 +39,9 @@ export type PermissionResolver = (
 
 interface SessionListenerEntry {
   agentId: string
+  conversationId?: string
   handlers: Set<SessionNotificationHandler>
+  onCommands?: (commands: AgentSlashCommand[]) => void
 }
 
 /**
@@ -124,13 +127,25 @@ export class AcpProcessManager implements AgentProcessManager<AcpProcessHandle, 
   registerSessionListener(
     agentId: string,
     sessionId: string,
-    handler: SessionNotificationHandler
+    handler: SessionNotificationHandler,
+    options?: { conversationId?: string; onCommands?: (commands: AgentSlashCommand[]) => void }
   ): () => void {
     const entry = this.sessionListeners.get(sessionId)
     if (entry) {
       entry.handlers.add(handler)
+      if (options?.onCommands) {
+        entry.onCommands = options.onCommands
+      }
+      if (options?.conversationId) {
+        entry.conversationId = options.conversationId
+      }
     } else {
-      this.sessionListeners.set(sessionId, { agentId, handlers: new Set([handler]) })
+      this.sessionListeners.set(sessionId, {
+        agentId,
+        conversationId: options?.conversationId,
+        handlers: new Set([handler]),
+        onCommands: options?.onCommands
+      })
     }
 
     return () => {
@@ -505,6 +520,11 @@ export class AcpProcessManager implements AgentProcessManager<AcpProcessHandle, 
       return
     }
 
+    if (notification.update.sessionUpdate === 'available_commands_update') {
+      const commands = this.mapAvailableCommands(notification.update.availableCommands)
+      entry.onCommands?.(commands)
+    }
+
     entry.handlers.forEach((handler) => {
       try {
         handler(notification)
@@ -559,5 +579,23 @@ export class AcpProcessManager implements AgentProcessManager<AcpProcessHandle, 
 
   private isHandleAlive(handle: AcpProcessHandle): boolean {
     return !handle.child.killed && !handle.connection.signal.aborted
+  }
+
+  private mapAvailableCommands(commands?: schema.AvailableCommand[] | null): AgentSlashCommand[] {
+    if (!commands?.length) return []
+
+    return commands
+      .map((command) => {
+        const hint =
+          command.input && 'hint' in command.input
+            ? (command.input.hint as string | undefined)
+            : undefined
+        return {
+          name: command.name,
+          description: command.description,
+          hint: hint ?? null
+        }
+      })
+      .filter((item) => Boolean(item.name && item.description))
   }
 }

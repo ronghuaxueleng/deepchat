@@ -246,6 +246,221 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
     )
   }
 
+  async *runSlashCommand(
+    providerId: string,
+    modelId: string,
+    eventId: string,
+    sessionId: string,
+    commandName: string,
+    userInput?: string,
+    conversationId?: string
+  ): AsyncGenerator<LLMAgentEvent, void, unknown> {
+    const provider = this.getProviderInstance(providerId)
+    if (!(provider instanceof AcpProvider)) {
+      throw new Error('Slash commands are only supported for ACP provider')
+    }
+
+    const abortController = new AbortController()
+    this.activeStreams.set(eventId, {
+      isGenerating: true,
+      providerId,
+      modelId,
+      abortController,
+      provider
+    })
+
+    const totalUsage = {
+      prompt_tokens: 0,
+      completion_tokens: 0,
+      total_tokens: 0,
+      context_length: 0
+    }
+    const toolCallChunks: Record<
+      string,
+      {
+        name: string
+        arguments_chunk: string
+      }
+    > = {}
+
+    try {
+      const stream = provider.runSlashCommand(sessionId, commandName, userInput, conversationId)
+      for await (const chunk of stream) {
+        if (abortController.signal.aborted) {
+          break
+        }
+        switch (chunk.type) {
+          case 'text':
+            if (chunk.content) {
+              yield {
+                type: 'response',
+                data: {
+                  eventId,
+                  content: chunk.content
+                }
+              }
+            }
+            break
+          case 'reasoning':
+            if (chunk.reasoning_content) {
+              yield {
+                type: 'response',
+                data: {
+                  eventId,
+                  reasoning_content: chunk.reasoning_content
+                }
+              }
+            }
+            break
+          case 'tool_call_start':
+            if (chunk.tool_call_id && chunk.tool_call_name) {
+              toolCallChunks[chunk.tool_call_id] = {
+                name: chunk.tool_call_name,
+                arguments_chunk: ''
+              }
+              yield {
+                type: 'response',
+                data: {
+                  eventId,
+                  tool_call: 'start',
+                  tool_call_id: chunk.tool_call_id,
+                  tool_call_name: chunk.tool_call_name,
+                  tool_call_params: ''
+                }
+              }
+            }
+            break
+          case 'tool_call_chunk':
+            if (
+              chunk.tool_call_id &&
+              chunk.tool_call_arguments_chunk &&
+              toolCallChunks[chunk.tool_call_id]
+            ) {
+              toolCallChunks[chunk.tool_call_id].arguments_chunk += chunk.tool_call_arguments_chunk
+              yield {
+                type: 'response',
+                data: {
+                  eventId,
+                  tool_call: 'update',
+                  tool_call_id: chunk.tool_call_id,
+                  tool_call_name: toolCallChunks[chunk.tool_call_id].name,
+                  tool_call_params: toolCallChunks[chunk.tool_call_id].arguments_chunk
+                }
+              }
+            }
+            break
+          case 'tool_call_end':
+            if (chunk.tool_call_id && toolCallChunks[chunk.tool_call_id]) {
+              const params =
+                chunk.tool_call_arguments_complete ??
+                toolCallChunks[chunk.tool_call_id].arguments_chunk
+              yield {
+                type: 'response',
+                data: {
+                  eventId,
+                  tool_call: 'update',
+                  tool_call_id: chunk.tool_call_id,
+                  tool_call_name: toolCallChunks[chunk.tool_call_id].name,
+                  tool_call_params: params
+                }
+              }
+              delete toolCallChunks[chunk.tool_call_id]
+            }
+            break
+          case 'permission': {
+            const permission = chunk.permission
+            const permissionType = permission.permissionType ?? 'read'
+            const description = permission.description ?? ''
+            const toolName = permission.tool_call_name ?? permission.tool_call_id
+            const serverName =
+              permission.server_name ?? permission.agentName ?? permission.providerName ?? ''
+
+            yield {
+              type: 'response',
+              data: {
+                eventId,
+                tool_call: 'permission-required',
+                tool_call_id: permission.tool_call_id,
+                tool_call_name: toolName,
+                tool_call_params: permission.tool_call_params,
+                tool_call_server_name: serverName,
+                tool_call_server_icons: permission.server_icons,
+                tool_call_server_description: permission.server_description ?? permission.agentName,
+                tool_call_response: description,
+                permission_request: {
+                  toolName,
+                  serverName,
+                  permissionType,
+                  description,
+                  providerId: permission.providerId,
+                  requestId: permission.requestId,
+                  sessionId: permission.sessionId,
+                  agentId: permission.agentId,
+                  agentName: permission.agentName,
+                  conversationId: permission.conversationId,
+                  options: permission.options,
+                  rememberable: permission.metadata?.rememberable === false ? false : true
+                }
+              }
+            }
+            break
+          }
+          case 'usage':
+            if (chunk.usage) {
+              totalUsage.prompt_tokens += chunk.usage.prompt_tokens
+              totalUsage.completion_tokens += chunk.usage.completion_tokens
+              totalUsage.total_tokens += chunk.usage.total_tokens
+              yield {
+                type: 'response',
+                data: {
+                  eventId,
+                  totalUsage: { ...totalUsage }
+                }
+              }
+            }
+            break
+          case 'image_data':
+            if (chunk.image_data) {
+              yield {
+                type: 'response',
+                data: {
+                  eventId,
+                  image_data: chunk.image_data
+                }
+              }
+            }
+            break
+          case 'rate_limit':
+            if (chunk.rate_limit) {
+              yield {
+                type: 'response',
+                data: {
+                  eventId,
+                  rate_limit: chunk.rate_limit
+                }
+              }
+            }
+            break
+          case 'error':
+            yield {
+              type: 'error',
+              data: {
+                eventId,
+                error: chunk.error_message || 'Provider stream error'
+              }
+            }
+            break
+          case 'stop':
+            // stop event will be handled by finally block via end event
+            break
+        }
+      }
+    } finally {
+      this.activeStreams.delete(eventId)
+      yield { type: 'end', data: { eventId, userStop: abortController.signal.aborted } }
+    }
+  }
+
   // 非流式方法
   async generateCompletion(
     providerId: string,
