@@ -969,8 +969,8 @@ export class WindowPresenter implements IWindowPresenter {
       })
     }
 
-    // 开发模式下可选开启 DevTools
-    if (is.dev) {
+    // 开发模式下可选开启 DevTools (通过 DEEPCHAT_DEVTOOLS 环境变量控制)
+    if (is.dev && process.env.DEEPCHAT_DEVTOOLS === '1') {
       shellWindow.webContents.openDevTools({ mode: 'detach' })
     }
 
@@ -1375,8 +1375,8 @@ export class WindowPresenter implements IWindowPresenter {
       await settingsWindow.loadFile(join(__dirname, '../renderer/settings/index.html'))
     }
 
-    // Open DevTools in development mode
-    if (is.dev) {
+    // Open DevTools in development mode (controlled by DEEPCHAT_DEVTOOLS env var)
+    if (is.dev && process.env.DEEPCHAT_DEVTOOLS === '1') {
       settingsWindow.webContents.openDevTools({ mode: 'detach' })
     }
 

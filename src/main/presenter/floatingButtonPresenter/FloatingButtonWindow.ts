@@ -79,8 +79,10 @@ export class FloatingButtonWindow {
       // 加载悬浮按钮页面
       if (isDev) {
         await this.window.loadURL('http://localhost:5173/floating/')
-        // 开发模式下可选择性打开开发者工具（暂时禁用，避免影响拖拽）
-        this.window.webContents.openDevTools({ mode: 'detach' })
+        // 开发模式下可选择性打开开发者工具（通过 DEEPCHAT_DEVTOOLS 环境变量控制）
+        if (process.env.DEEPCHAT_DEVTOOLS === '1') {
+          this.window.webContents.openDevTools({ mode: 'detach' })
+        }
       } else {
         await this.window.loadFile(path.join(__dirname, '../renderer/floating/index.html'))
       }
