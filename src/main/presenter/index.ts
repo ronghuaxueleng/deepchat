@@ -194,7 +194,7 @@ export class Presenter implements IPresenter {
       console.log('[Presenter] API Server enabled:', apiServerEnabled)
 
       if (apiServerEnabled) {
-        const port = this.configPresenter.getSetting<number>('apiServer.port') || 3456
+        const port = this.configPresenter.getSetting<number>('apiServer.port') || 3457
         const apiKey = this.configPresenter.getSetting<string>('apiServer.apiKey')
         const defaultProviderId = this.configPresenter.getSetting<string>(
           'apiServer.defaultProviderId'

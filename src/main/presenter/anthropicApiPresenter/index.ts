@@ -52,7 +52,7 @@ export class AnthropicApiPresenter {
     // configPresenter is reserved for future use (reading API server settings from config)
     this.llmProviderPresenter = llmProviderPresenter
     this.config = {
-      port: config?.port || 3456,
+      port: config?.port || 3457,
       host: config?.host || '0.0.0.0',
       apiKey: config?.apiKey,
       defaultProviderId: config?.defaultProviderId,
