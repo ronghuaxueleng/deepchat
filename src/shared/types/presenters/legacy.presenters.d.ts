@@ -391,8 +391,22 @@ export interface IPresenter {
   oauthPresenter: IOAuthPresenter
   dialogPresenter: IDialogPresenter
   knowledgePresenter: IKnowledgePresenter
+  anthropicApiPresenter: IAnthropicApiPresenter
   init(): void
   destroy(): void
+}
+
+export interface IAnthropicApiPresenter {
+  start(): Promise<void>
+  stop(): Promise<void>
+  getStatus(): { isRunning: boolean; port: number; host: string }
+  updateConfig(config: {
+    port?: number
+    host?: string
+    apiKey?: string
+    defaultProviderId?: string
+    defaultModelId?: string
+  }): void
 }
 
 export interface INotificationPresenter {

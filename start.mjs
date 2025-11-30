@@ -577,17 +577,28 @@ async function installRuntimeWithProxy() {
 /**
  * 启动开发服务器
  */
-function startDevServer() {
+function startDevServer(enableDevTools = false) {
   log.step('启动开发服务器...')
   log.info('按 Ctrl+C 停止服务器')
   console.log('')
 
   const command = IS_WINDOWS ? 'pnpm.cmd' : 'pnpm'
 
+  // 通过 DEEPCHAT_DEVTOOLS 环境变量控制是否打开 DevTools
+  const env = {
+    ...process.env,
+    DEEPCHAT_DEVTOOLS: enableDevTools ? '1' : '0'
+  }
+
+  if (!enableDevTools) {
+    log.info('DevTools 已禁用 (可通过 F12 手动打开，或使用 --devtools 启动)')
+  }
+
   const child = spawn(command, ['run', 'dev'], {
     cwd: __dirname,
     stdio: 'inherit',
-    shell: IS_WINDOWS
+    shell: IS_WINDOWS,
+    env
   })
 
   child.on('error', (error) => {
@@ -619,6 +630,7 @@ ${colors.yellow}选项:${colors.reset}
   --skip-runtime    跳过运行时依赖安装
   --skip-native     跳过原生模块编译 (仅用于调试)
   --no-mirror       不配置国内镜像
+  --devtools        启动时自动打开 DevTools
   --clean           清理并重新安装所有依赖
 
 ${colors.yellow}示例:${colors.reset}
@@ -670,6 +682,7 @@ async function main() {
     skipRuntime: args.includes('--skip-runtime'),
     skipNative: args.includes('--skip-native'),
     noMirror: args.includes('--no-mirror'),
+    devTools: args.includes('--devtools'),
     clean: args.includes('--clean')
   }
 
@@ -741,7 +754,7 @@ async function main() {
     console.log('')
     log.success('环境准备完成!')
     console.log('')
-    startDevServer()
+    startDevServer(options.devTools)
   } else {
     console.log('')
     log.success('依赖安装完成!')

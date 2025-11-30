@@ -861,7 +861,7 @@ export class SearchManager {
         callback({ requestHeaders: headers })
       }
     )
-    if (is.dev) {
+    if (is.dev && process.env.DEEPCHAT_DEVTOOLS === '1') {
       searchWindow.webContents.openDevTools({ mode: 'detach' })
     }
     this.searchWindows.set(conversationId, searchWindow)

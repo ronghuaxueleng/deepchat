@@ -139,7 +139,7 @@ export class TabPresenter implements ITabPresenter {
       view.webContents.loadURL(url)
     }
 
-    if (is.dev) {
+    if (is.dev && process.env.DEEPCHAT_DEVTOOLS === '1') {
       view.webContents.openDevTools({ mode: 'detach' })
     }
 

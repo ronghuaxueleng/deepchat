@@ -134,7 +134,10 @@ export class ConfigPresenter implements IConfigPresenter {
         default_system_prompt: '',
         webContentLengthLimit: 3000,
         updateChannel: 'stable', // Default to stable version
-        appVersion: this.currentAppVersion
+        appVersion: this.currentAppVersion,
+        // API Server settings (for Claude Code Router integration)
+        'apiServer.enabled': true,
+        'apiServer.port': 3456
       }
     })
 
