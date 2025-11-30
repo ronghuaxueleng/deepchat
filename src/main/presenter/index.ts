@@ -40,6 +40,7 @@ import { OAuthPresenter } from './oauthPresenter'
 import { FloatingButtonPresenter } from './floatingButtonPresenter'
 import { CONFIG_EVENTS, WINDOW_EVENTS } from '@/events'
 import { KnowledgePresenter } from './knowledgePresenter'
+import { AnthropicApiPresenter } from './anthropicApiPresenter'
 
 // IPC调用上下文接口
 interface IPCCallContext {
@@ -80,6 +81,7 @@ export class Presenter implements IPresenter {
   // llamaCppPresenter: LlamaCppPresenter // 保留原始注释
   dialogPresenter: IDialogPresenter
   lifecycleManager: ILifecycleManager
+  anthropicApiPresenter: AnthropicApiPresenter
 
   private constructor(lifecycleManager: ILifecycleManager) {
     // Store lifecycle manager reference for component access
@@ -117,6 +119,12 @@ export class Presenter implements IPresenter {
       this.configPresenter,
       dbDir,
       this.filePresenter
+    )
+
+    // Initialize Anthropic API Presenter for Claude Code Router integration
+    this.anthropicApiPresenter = new AnthropicApiPresenter(
+      this.configPresenter,
+      this.llmproviderPresenter
     )
 
     // this.llamaCppPresenter = new LlamaCppPresenter() // 保留原始注释
@@ -173,6 +181,43 @@ export class Presenter implements IPresenter {
 
     // 初始化悬浮按钮
     this.initializeFloatingButton()
+
+    // 初始化 Anthropic API 服务器（用于 Claude Code Router 集成）
+    this.initializeAnthropicApiServer()
+  }
+
+  // 初始化 Anthropic API 服务器
+  private async initializeAnthropicApiServer() {
+    try {
+      // 从配置中读取是否启用 API 服务器（默认启用）
+      const apiServerEnabled = this.configPresenter.getSetting<boolean>('apiServer.enabled') ?? true
+      console.log('[Presenter] API Server enabled:', apiServerEnabled)
+
+      if (apiServerEnabled) {
+        const port = this.configPresenter.getSetting<number>('apiServer.port') || 3456
+        const apiKey = this.configPresenter.getSetting<string>('apiServer.apiKey')
+        const defaultProviderId = this.configPresenter.getSetting<string>(
+          'apiServer.defaultProviderId'
+        )
+        const defaultModelId = this.configPresenter.getSetting<string>('apiServer.defaultModelId')
+
+        console.log('[Presenter] Starting API server on port:', port)
+
+        this.anthropicApiPresenter.updateConfig({
+          port,
+          apiKey,
+          defaultProviderId,
+          defaultModelId
+        })
+
+        await this.anthropicApiPresenter.start()
+        console.log('[Presenter] Anthropic API server started successfully')
+      } else {
+        console.log('[Presenter] API Server is disabled in config')
+      }
+    } catch (error) {
+      console.error('[Presenter] Failed to initialize Anthropic API server:', error)
+    }
   }
 
   // 初始化悬浮按钮
@@ -207,6 +252,7 @@ export class Presenter implements IPresenter {
 
   // 在应用退出时进行清理，关闭数据库连接
   destroy() {
+    this.anthropicApiPresenter.stop() // 停止 Anthropic API 服务器
     this.floatingButtonPresenter.destroy() // 销毁悬浮按钮
     this.tabPresenter.destroy()
     this.sqlitePresenter.close() // 关闭数据库连接
